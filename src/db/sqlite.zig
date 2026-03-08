@@ -11,6 +11,9 @@ pub const Database = struct {
     insert_fix_stmt: *c.sqlite3_stmt,
     insert_airport_stmt: *c.sqlite3_stmt,
     insert_runway_stmt: *c.sqlite3_stmt,
+    insert_gate_stmt: *c.sqlite3_stmt,
+
+    xp_upsert_airport_metadata_stmt: *c.sqlite3_stmt,
 
     pub fn init(db_path: [:0]const u8) !Database {
         var db: ?*c.sqlite3 = null;
@@ -24,21 +27,28 @@ pub const Database = struct {
         var insert_fix_stmt: ?*c.sqlite3_stmt = null;
         var insert_airport_stmt: ?*c.sqlite3_stmt = null;
         var insert_runway_stmt: ?*c.sqlite3_stmt = null;
+        var insert_gate_stmt: ?*c.sqlite3_stmt = null;
+        var xp_upsert_airport_metadata_stmt: ?*c.sqlite3_stmt = null;
 
         try Database.assertOk(db.?, c.sqlite3_prepare_v2(db, "INSERT INTO waypoints (ident, lat, lon, airport, region) VALUES (?, ?, ?, ?, ?);", -1, &insert_fix_stmt, null));
         try Database.assertOk(db.?, c.sqlite3_prepare_v2(db, "INSERT INTO airports (icao, name, elevation, lat, lon) VALUES (?, ?, ?, ?, ?);", -1, &insert_airport_stmt, null));
         try Database.assertOk(db.?, c.sqlite3_prepare_v2(db, "INSERT INTO runways (airportIcao, widthMetres, lat, lon, number) VALUES (?, ?, ?, ?, ?);", -1, &insert_runway_stmt, null));
+        try Database.assertOk(db.?, c.sqlite3_prepare_v2(db, "INSERT INTO gates (airportIcao, name, lat, lon) VALUES (?, ?, ?, ?);", -1, &insert_gate_stmt, null));
+        try Database.assertOk(db.?, c.sqlite3_prepare_v2(db, "INSERT INTO airports (icao, lat, lon) VALUES (?, ?, ?) ON CONFLICT(icao) DO UPDATE SET lat=excluded.lat, lon=excluded.lon;", -1, &xp_upsert_airport_metadata_stmt, null));
 
         var database = Database{
             .db = db.?,
             .insert_fix_stmt = insert_fix_stmt.?,
             .insert_airport_stmt = insert_airport_stmt.?,
             .insert_runway_stmt = insert_runway_stmt.?,
+            .insert_gate_stmt = insert_gate_stmt.?,
+            .xp_upsert_airport_metadata_stmt = xp_upsert_airport_metadata_stmt.?,
         };
 
         try database.deleteDataFromTable("waypoints");
         try database.deleteDataFromTable("airports");
         try database.deleteDataFromTable("runways");
+        try database.deleteDataFromTable("gates");
 
         return database;
     }
@@ -46,6 +56,10 @@ pub const Database = struct {
     pub fn deinit(self: *Database) void {
         _ = c.sqlite3_finalize(self.insert_fix_stmt);
         _ = c.sqlite3_finalize(self.insert_airport_stmt);
+        _ = c.sqlite3_finalize(self.insert_runway_stmt);
+        _ = c.sqlite3_finalize(self.insert_gate_stmt);
+        _ = c.sqlite3_finalize(self.xp_upsert_airport_metadata_stmt);
+
         _ = c.sqlite3_close(self.db);
     }
 
@@ -114,6 +128,35 @@ pub const Database = struct {
                     const stepResult = c.sqlite3_step(stmt);
                     try Database.assertDone(self.db, stepResult);
                 }
+            },
+            .gates => |gates| {
+                const stmt = self.insert_gate_stmt;
+
+                for (gates) |gate| {
+                    _ = c.sqlite3_reset(stmt);
+                    _ = c.sqlite3_clear_bindings(stmt);
+
+                    _ = c.sqlite3_bind_text(stmt, 1, gate.airport_icao.ptr, @intCast(gate.airport_icao.len), SQLITE_TRANSIENT);
+                    _ = c.sqlite3_bind_text(stmt, 2, gate.name.ptr, @intCast(gate.name.len), SQLITE_TRANSIENT);
+                    _ = c.sqlite3_bind_double(stmt, 3, gate.lat);
+                    _ = c.sqlite3_bind_double(stmt, 4, gate.lon);
+
+                    const stepResult = c.sqlite3_step(stmt);
+                    try Database.assertDone(self.db, stepResult);
+                }
+            },
+            .xp_airport_metadata => |meta| {
+                const stmt = self.xp_upsert_airport_metadata_stmt;
+
+                _ = c.sqlite3_reset(stmt);
+                _ = c.sqlite3_clear_bindings(stmt);
+
+                _ = c.sqlite3_bind_text(stmt, 1, meta.icao.ptr, @intCast(meta.icao.len), SQLITE_TRANSIENT);
+                _ = c.sqlite3_bind_double(stmt, 2, meta.lat);
+                _ = c.sqlite3_bind_double(stmt, 3, meta.lon);
+
+                const stepResult = c.sqlite3_step(stmt);
+                try Database.assertDone(self.db, stepResult);
             },
         }
     }

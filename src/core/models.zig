@@ -10,7 +10,8 @@ pub const Airport = struct {
     icao: []const u8,
     name: []const u8,
     elevation: i32,
-    has_tower: bool,
+    lat: f64,
+    lon: f64,
 };
 
 pub const Runway = struct {
@@ -21,7 +22,25 @@ pub const Runway = struct {
     number: []const u8,
 };
 
+pub const Gate = struct {
+    airport_icao: []const u8,
+    name: []const u8,
+    lat: f64,
+    lon: f64,
+};
+
 pub const AirportRecord = union(enum) {
     airport: Airport,
     runways: []const Runway,
+    gates: []const Gate,
+
+    // XP Only
+    xp_airport_metadata: XPAirportMetadata,
+};
+
+// XP Only
+pub const XPAirportMetadata = struct {
+    icao: []const u8,
+    lon: f64,
+    lat: f64,
 };

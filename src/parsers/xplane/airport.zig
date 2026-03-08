@@ -5,6 +5,9 @@ pub const Parser = struct {
     current_icao_buf: [8]u8 = undefined,
     current_icao_len: usize = 0,
 
+    current_lat: f64 = 0.0,
+    current_lon: f64 = 0.0,
+
     fn currentIcao(self: *Parser) []const u8 {
         return self.current_icao_buf[0..self.current_icao_len];
     }
@@ -35,17 +38,66 @@ pub const Parser = struct {
                     .airport = .{
                         .icao = icao,
                         .elevation = std.fmt.parseInt(i32, elev_str, 10) catch 0,
-                        .has_tower = true,
                         .name = name,
+                        .lat = 0.0,
+                        .lon = 0.0,
                     },
+                };
+            },
+            1302 => {
+                const key = it.next() orelse return null;
+
+                if (std.mem.eql(u8, key, "datum_lat")) {
+                    const lat_str = it.next() orelse return null;
+                    self.current_lat = std.fmt.parseFloat(f64, lat_str) catch 0.0;
+                } else if (std.mem.eql(u8, key, "datum_lon")) {
+                    const lon_str = it.next() orelse return null;
+                    self.current_lon = std.fmt.parseFloat(f64, lon_str) catch 0.0;
+                }
+
+                if (self.current_lat != 0.0 and self.current_lon != 0.0) {
+                    return models.AirportRecord{
+                        .xp_airport_metadata = .{
+                            .icao = self.currentIcao(),
+                            .lat = self.current_lat,
+                            .lon = self.current_lon,
+                        },
+                    };
+                }
+
+                return null;
+            },
+            1300 => {
+                const lat_str = it.next() orelse return null;
+                const lat = std.fmt.parseFloat(f64, lat_str) catch return null;
+                const lon_str = it.next() orelse return null;
+                const lon = std.fmt.parseFloat(f64, lon_str) catch return null;
+
+                _ = it.next(); // Heading in degrees
+                _ = it.next(); // “gate”, “hangar”, “misc” or “tie-down”
+                _ = it.next(); // Airplane types that can use this location
+
+                const name = it.rest();
+
+                var gates: std.ArrayList(models.Gate) = .empty;
+
+                try gates.append(allocator, models.Gate{
+                    .airport_icao = self.currentIcao(),
+                    .name = name,
+                    .lat = lat,
+                    .lon = lon,
+                });
+
+                return models.AirportRecord{
+                    .gates = try gates.toOwnedSlice(allocator),
                 };
             },
             100 => {
                 const width_meters_str = it.next() orelse return null;
                 const width_meters = std.fmt.parseFloat(f32, width_meters_str) catch return null;
 
-                _ = it.next(); // Surface Type Code
-                _ = it.next(); // Surface Type Code
+                _ = it.next(); // Code defining the surface type (concrete, asphalt, etc)
+                _ = it.next(); // Code defining a runway shoulder surface  type + 100x width of each shoulder in whole meters.
                 _ = it.next(); // Runway smoothness
                 _ = it.next(); // Runway centre-line lights
                 _ = it.next(); // Runway edge lighting
