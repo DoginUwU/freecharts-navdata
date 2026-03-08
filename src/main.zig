@@ -1,14 +1,9 @@
 const std = @import("std");
 const xp_reader = @import("./parsers/xplane/reader.zig");
-const xp_fix = @import("./parsers/xplane/fix.zig");
-
-const Fix = @import("./core/models.zig").Fix;
-
 const sqlite = @import("./db/sqlite.zig");
 
-fn saveFixToDatabase(db: *sqlite.Database, fix: Fix) !void {
-    try db.insertFix(fix);
-}
+const xp_fix = @import("./parsers/xplane/fix.zig");
+const xp_airport = @import("./parsers/xplane/airport.zig");
 
 const FlightSim = enum {
     XPlane,
@@ -29,6 +24,44 @@ fn detectFlightSim(fs_path: [:0]const u8) !FlightSim {
     }
 
     return .Unknown;
+}
+
+fn getSimFilePath(allocator: std.mem.Allocator, base: []const u8, sub_path: []const u8) ![]u8 {
+    return try std.fs.path.join(allocator, &.{ base, sub_path });
+}
+
+fn importXPlaneData(allocator: std.mem.Allocator, root: []const u8, db: *sqlite.Database) !void {
+    // var fix_parser = xp_fix.Parser{};
+    var apt_parser = xp_airport.Parser{};
+
+    const tasks = .{
+        // .{
+        //     .path = "Custom Data/earth_fix.dat",
+        //     .parser = &fix_parser,
+        //     .handler = sqlite.Database.insertFix,
+        // },
+        .{
+            .path = "Global Scenery/Global Airports/Earth nav data/apt.dat",
+            .parser = &apt_parser,
+            .handler = sqlite.Database.insertAirportRecord,
+        },
+    };
+
+    inline for (tasks) |task| {
+        const full_path = try getSimFilePath(allocator, root, task.path);
+        defer allocator.free(full_path);
+
+        std.debug.print("Importing: {s}...\n", .{task.path});
+
+        try db.beginTransaction();
+
+        var arena = std.heap.ArenaAllocator.init(allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+
+        try xp_reader.processFile(a, full_path, db, task.parser, task.handler);
+        try db.commitTransaction();
+    }
 }
 
 pub fn main() !void {
@@ -54,23 +87,15 @@ pub fn main() !void {
 
     const flight_sim = try detectFlightSim(fs_path);
 
-    var db = try sqlite.Database.init(db_path);
+    const db_path_z = try gpa.dupeZ(u8, db_path);
+    defer gpa.free(db_path_z);
+
+    var db = try sqlite.Database.init(db_path_z);
     defer db.deinit();
 
     switch (flight_sim) {
-        .XPlane => {
-            try db.beginTransaction();
-            const dat_file_path = try std.fs.path.join(gpa, &.{ fs_path, "Custom Data/earth_fix.dat" });
-            defer gpa.free(dat_file_path);
-
-            try xp_reader.processDatFile(Fix, *sqlite.Database, dat_file_path, &db, xp_fix.parseLine, saveFixToDatabase);
-            try db.commitTransaction();
-        },
-        .MicrosoftFlightSimulator => {
-            unreachable;
-        },
-        .Unknown => {
-            return error.UnknownFlightSimulator;
-        },
+        .XPlane => try importXPlaneData(gpa, fs_path, &db),
+        .MicrosoftFlightSimulator => return error.MSFSNotSupportedYet,
+        .Unknown => return error.UnknownFlightSimulator,
     }
 }

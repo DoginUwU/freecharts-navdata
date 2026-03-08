@@ -9,6 +9,8 @@ const SQLITE_TRANSIENT = @as(c.sqlite3_destructor_type, @ptrFromInt(@as(usize, @
 pub const Database = struct {
     db: *c.sqlite3,
     insert_fix_stmt: *c.sqlite3_stmt,
+    insert_airport_stmt: *c.sqlite3_stmt,
+    insert_runway_stmt: *c.sqlite3_stmt,
 
     pub fn init(db_path: [:0]const u8) !Database {
         var db: ?*c.sqlite3 = null;
@@ -20,23 +22,30 @@ pub const Database = struct {
         _ = c.sqlite3_exec(db, "PRAGMA synchronous = OFF; PRAGMA journal_mode = MEMORY;", null, null, null);
 
         var insert_fix_stmt: ?*c.sqlite3_stmt = null;
-        const insert_sql = "INSERT INTO waypoints (ident, lat, lon, airport, region) VALUES (?, ?, ?, ?, ?);";
-        if (c.sqlite3_prepare_v2(db, insert_sql, -1, &insert_fix_stmt, null) != c.SQLITE_OK) {
-            return error.SQLitePrepareFailed;
-        }
+        var insert_airport_stmt: ?*c.sqlite3_stmt = null;
+        var insert_runway_stmt: ?*c.sqlite3_stmt = null;
+
+        try Database.assertOk(db.?, c.sqlite3_prepare_v2(db, "INSERT INTO waypoints (ident, lat, lon, airport, region) VALUES (?, ?, ?, ?, ?);", -1, &insert_fix_stmt, null));
+        try Database.assertOk(db.?, c.sqlite3_prepare_v2(db, "INSERT INTO airports (icao, name, elevation, lat, lon) VALUES (?, ?, ?, ?, ?);", -1, &insert_airport_stmt, null));
+        try Database.assertOk(db.?, c.sqlite3_prepare_v2(db, "INSERT INTO runways (airportIcao, widthMetres, lat, lon, number) VALUES (?, ?, ?, ?, ?);", -1, &insert_runway_stmt, null));
 
         var database = Database{
             .db = db.?,
             .insert_fix_stmt = insert_fix_stmt.?,
+            .insert_airport_stmt = insert_airport_stmt.?,
+            .insert_runway_stmt = insert_runway_stmt.?,
         };
 
         try database.deleteDataFromTable("waypoints");
+        try database.deleteDataFromTable("airports");
+        try database.deleteDataFromTable("runways");
 
         return database;
     }
 
     pub fn deinit(self: *Database) void {
         _ = c.sqlite3_finalize(self.insert_fix_stmt);
+        _ = c.sqlite3_finalize(self.insert_airport_stmt);
         _ = c.sqlite3_close(self.db);
     }
 
@@ -68,11 +77,44 @@ pub const Database = struct {
         _ = c.sqlite3_bind_text(stmt, 4, fix.airport.ptr, @intCast(fix.airport.len), SQLITE_TRANSIENT);
         _ = c.sqlite3_bind_text(stmt, 5, fix.region.ptr, @intCast(fix.region.len), SQLITE_TRANSIENT);
 
-        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
-            const errMsg = c.sqlite3_errmsg(self.db);
-            std.debug.print("SQLite error: {s}\n", .{errMsg});
-            std.debug.print("Failed to insert fix: {}\n", .{fix});
-            return error.SQLiteStepFailed;
+        const stepResult = c.sqlite3_step(stmt);
+        try Database.assertDone(self.db, stepResult);
+    }
+
+    pub fn insertAirportRecord(self: *Database, record: models.AirportRecord) !void {
+        switch (record) {
+            .airport => |apt| {
+                const stmt = self.insert_airport_stmt;
+
+                _ = c.sqlite3_reset(stmt);
+                _ = c.sqlite3_clear_bindings(stmt);
+
+                _ = c.sqlite3_bind_text(stmt, 1, apt.icao.ptr, @intCast(apt.icao.len), SQLITE_TRANSIENT);
+                _ = c.sqlite3_bind_text(stmt, 2, apt.name.ptr, @intCast(apt.name.len), SQLITE_TRANSIENT);
+                _ = c.sqlite3_bind_int(stmt, 3, apt.elevation);
+                _ = c.sqlite3_bind_double(stmt, 4, 0.0);
+                _ = c.sqlite3_bind_double(stmt, 5, 0.0);
+
+                const stepResult = c.sqlite3_step(stmt);
+                try Database.assertDone(self.db, stepResult);
+            },
+            .runways => |rwys| {
+                const stmt = self.insert_runway_stmt;
+
+                for (rwys) |rwy| {
+                    _ = c.sqlite3_reset(stmt);
+                    _ = c.sqlite3_clear_bindings(stmt);
+
+                    _ = c.sqlite3_bind_text(stmt, 1, rwy.airport_icao.ptr, @intCast(rwy.airport_icao.len), SQLITE_TRANSIENT);
+                    _ = c.sqlite3_bind_double(stmt, 2, rwy.width);
+                    _ = c.sqlite3_bind_double(stmt, 3, rwy.lat);
+                    _ = c.sqlite3_bind_double(stmt, 4, rwy.lon);
+                    _ = c.sqlite3_bind_text(stmt, 5, rwy.number.ptr, @intCast(rwy.number.len), SQLITE_TRANSIENT);
+
+                    const stepResult = c.sqlite3_step(stmt);
+                    try Database.assertDone(self.db, stepResult);
+                }
+            },
         }
     }
 
@@ -89,6 +131,22 @@ pub const Database = struct {
             const errMsg = c.sqlite3_errmsg(self.db);
             std.debug.print("SQLite error during delete from {s}: {s}\n", .{ tableName, errMsg });
             return error.SQLiteDeleteFailed;
+        }
+    }
+
+    fn assertOk(db: *c.sqlite3, result: c_int) !void {
+        if (result != c.SQLITE_OK) {
+            const errMsg = c.sqlite3_errmsg(db);
+            std.debug.print("SQLite error: {s}\n", .{errMsg});
+            return error.SQLiteOperationFailed;
+        }
+    }
+
+    fn assertDone(db: *c.sqlite3, result: c_int) !void {
+        if (result != c.SQLITE_DONE) {
+            const errMsg = c.sqlite3_errmsg(db);
+            std.debug.print("SQLite error: {s}\n", .{errMsg});
+            return error.SQLiteOperationFailed;
         }
     }
 };
