@@ -56,13 +56,18 @@ pub const Parser = struct {
                 }
 
                 if (self.current_lat != 0.0 and self.current_lon != 0.0) {
-                    return models.AirportRecord{
+                    const airport_record = models.AirportRecord{
                         .xp_airport_metadata = .{
                             .icao = self.currentIcao(),
                             .lat = self.current_lat,
                             .lon = self.current_lon,
                         },
                     };
+
+                    self.current_lat = 0.0;
+                    self.current_lon = 0.0;
+
+                    return airport_record;
                 }
 
                 return null;
@@ -129,6 +134,38 @@ pub const Parser = struct {
 
                 return models.AirportRecord{
                     .runways = try runaways.toOwnedSlice(allocator),
+                };
+            },
+            101 => {
+                _ = it.next(); // Width of runway in metres
+                _ = it.next(); // Flag for perimeter buoys
+                _ = it.next(); // Runway number
+                const lat_str = it.next() orelse return null;
+                const lat = std.fmt.parseFloat(f64, lat_str) catch return null;
+                const lon_str = it.next() orelse return null;
+                const lon = std.fmt.parseFloat(f64, lon_str) catch return null;
+
+                return models.AirportRecord{
+                    .xp_airport_metadata = .{
+                        .icao = self.currentIcao(),
+                        .lat = lat,
+                        .lon = lon,
+                    },
+                };
+            },
+            102 => {
+                _ = it.next(); // Designator for a helipad.  Must be unique at an airport.
+                const lat_str = it.next() orelse return null;
+                const lat = std.fmt.parseFloat(f64, lat_str) catch return null;
+                const lon_str = it.next() orelse return null;
+                const lon = std.fmt.parseFloat(f64, lon_str) catch return null;
+
+                return models.AirportRecord{
+                    .xp_airport_metadata = .{
+                        .icao = self.currentIcao(),
+                        .lat = lat,
+                        .lon = lon,
+                    },
                 };
             },
             else => {

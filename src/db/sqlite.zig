@@ -161,6 +161,23 @@ pub const Database = struct {
         }
     }
 
+    pub fn computeAirportsRanks(self: *Database) !void {
+        const sql =
+            \\ UPDATE airports
+            \\ SET rank = (
+            \\  SELECT (COUNT(DISTINCT r.id) * 10 + COUNT(DISTINCT g.id) * 2)
+            \\  FROM runways r
+            \\  LEFT JOIN gates g ON g.airportIcao = r.airportIcao
+            \\  WHERE r.airportIcao = airports.icao
+            \\ );
+        ;
+        if (c.sqlite3_exec(self.db, sql, null, null, null) != c.SQLITE_OK) {
+            const errMsg = c.sqlite3_errmsg(self.db);
+            std.debug.print("SQLite error during compute ranks: {s}\n", .{errMsg});
+            return error.SQLiteComputeRanksFailed;
+        }
+    }
+
     fn deleteDataFromTable(self: *Database, tableName: [:0]const u8) !void {
         var buffer: [256]u8 = undefined;
 

@@ -62,6 +62,8 @@ fn importXPlaneData(allocator: std.mem.Allocator, root: []const u8, db: *sqlite.
         try xp_reader.processFile(a, full_path, db, task.parser, task.handler);
         try db.commitTransaction();
     }
+
+    try db.computeAirportsRanks();
 }
 
 pub fn main() !void {
