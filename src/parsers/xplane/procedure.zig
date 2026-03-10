@@ -21,7 +21,7 @@ pub const Parser = struct {
         } else if (std.mem.eql(u8, raw_proc_type, "STAR")) {
             proc_type = .STAR;
         } else if (std.mem.eql(u8, raw_proc_type, "APPCH")) {
-            proc_type = .Approach;
+            proc_type = .APPCH;
         } else {
             return null;
         }
@@ -117,6 +117,6 @@ test "parseLine - APPCH Initial Fix (IF)" {
 
     try std.testing.expect(std.mem.eql(u8, result.?.leg_type, "IF"));
     try std.testing.expect(std.mem.eql(u8, result.?.fix_ident, "LO313"));
-    try std.testing.expect(result.?.type == .Approach);
+    try std.testing.expect(result.?.type == .APPCH);
     try std.testing.expect(result.?.sequence == 10);
 }

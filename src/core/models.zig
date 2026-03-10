@@ -46,18 +46,18 @@ pub const XPAirportMetadata = struct {
 };
 
 pub const DirectionRestriction = enum {
-    None,
-    Forward,
-    Backward,
+    NONE,
+    FORWARD,
+    BACKWARD,
 };
 
 pub const AirwayLevel = enum {
-    High,
-    Low,
+    HIGH,
+    LOW,
 };
 
-pub const NavaidType = enum {
-    Fix,
+pub const AirwayFixNavaidType = enum {
+    FIX,
     VOR,
     NDB,
 };
@@ -66,11 +66,13 @@ pub const Airway = struct {
     from_ident: []const u8,
     from_lat: f64,
     from_lon: f64,
-    from_type: NavaidType,
+    from_type: AirwayFixNavaidType,
+    from_region: []const u8,
     to_ident: []const u8,
     to_lat: f64,
     to_lon: f64,
-    to_type: NavaidType,
+    to_type: AirwayFixNavaidType,
+    to_region: []const u8,
     airway_name: []const u8,
     direction_restriction: DirectionRestriction,
     level: AirwayLevel,
@@ -82,7 +84,7 @@ pub const Airway = struct {
 pub const ProcedureType = enum {
     SID,
     STAR,
-    Approach,
+    APPCH,
 };
 
 pub const ProcedureLeg = struct {
@@ -93,4 +95,19 @@ pub const ProcedureLeg = struct {
     transition_ident: []const u8,
     type: ProcedureType,
     sequence: u32,
+};
+
+pub const NavaidType = enum {
+    VOR,
+    NDB,
+};
+
+pub const Navaid = struct {
+    ident: []const u8,
+    type: NavaidType,
+    lat: f64,
+    lon: f64,
+    frequency: i32,
+    region: []const u8,
+    name: []const u8,
 };

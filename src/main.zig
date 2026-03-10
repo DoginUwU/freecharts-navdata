@@ -2,10 +2,11 @@ const std = @import("std");
 const xp_reader = @import("./parsers/xplane/reader.zig");
 const sqlite = @import("./db/sqlite.zig");
 
-const xp_awy = @import("./parsers/xplane/airway.zig");
-const xp_fix = @import("./parsers/xplane/fix.zig");
-const xp_procedura = @import("./parsers/xplane/procedure.zig");
 const xp_airport = @import("./parsers/xplane/airport.zig");
+const xp_fix = @import("./parsers/xplane/fix.zig");
+const xp_navaid = @import("./parsers/xplane/navaid.zig");
+const xp_awy = @import("./parsers/xplane/airway.zig");
+const xp_procedure = @import("./parsers/xplane/procedure.zig");
 
 const FlightSim = enum {
     XPlane,
@@ -31,43 +32,59 @@ fn detectFlightSim(fs_path: [:0]const u8) !FlightSim {
 fn getSimFilePath(allocator: std.mem.Allocator, base: []const u8, sub_path: []const u8) ![]u8 {
     return try std.fs.path.join(allocator, &.{ base, sub_path });
 }
+
 fn importXPlaneData(
     allocator: std.mem.Allocator,
     root: []const u8,
     db: *sqlite.Database,
 ) !void {
-    // var fix_parser = xp_fix.Parser{};
-    // var apt_parser = xp_airport.Parser{};
-    // var awy_parser = xp_awy.Parser{};
-    var proc_parser = xp_procedura.Parser{};
+    var fix_parser = xp_fix.Parser{};
+    var apt_parser = xp_airport.Parser{};
+    var awy_parser = xp_awy.Parser{};
+    var proc_parser = xp_procedure.Parser{};
+    var navaid_parser = xp_navaid.Parser{};
 
-    // try importFile(
-    //     allocator,
-    //     root,
-    //     "Custom Data/earth_fix.dat",
-    //     &fix_parser,
-    //     db,
-    //     sqlite.Database.insertFix,
-    // );
+    std.debug.print("Importing Airports...\n", .{});
+    try importFile(
+        allocator,
+        root,
+        "Global Scenery/Global Airports/Earth nav data/apt.dat",
+        &apt_parser,
+        db,
+        sqlite.Database.insertAirportRecord,
+    );
 
-    // try importFile(
-    //     allocator,
-    //     root,
-    //     "Custom Data/earth_awy.dat",
-    //     &awy_parser,
-    //     db,
-    //     sqlite.Database.insertAirway,
-    // );
+    std.debug.print("Importing Fixes...\n", .{});
+    try importFile(
+        allocator,
+        root,
+        "Custom Data/earth_fix.dat",
+        &fix_parser,
+        db,
+        sqlite.Database.insertFix,
+    );
 
-    // try importFile(
-    //     allocator,
-    //     root,
-    //     "Global Scenery/Global Airports/Earth nav data/apt.dat",
-    //     &apt_parser,
-    //     db,
-    //     sqlite.Database.insertAirportRecord,
-    // );
+    std.debug.print("Importing Navaids...\n", .{});
+    try importFile(
+        allocator,
+        root,
+        "Custom Data/earth_nav.dat",
+        &navaid_parser,
+        db,
+        sqlite.Database.insertNavaid,
+    );
 
+    std.debug.print("Importing Airways...\n", .{});
+    try importFile(
+        allocator,
+        root,
+        "Custom Data/earth_awy.dat",
+        &awy_parser,
+        db,
+        sqlite.Database.insertAirway,
+    );
+
+    std.debug.print("Importing Procedures...\n", .{});
     try importCIFPDirectory(
         allocator,
         root,
@@ -75,6 +92,7 @@ fn importXPlaneData(
         db,
     );
 
+    std.debug.print("Computing airport ranks...\n", .{});
     try db.computeAirportsRanks();
 }
 
@@ -90,8 +108,6 @@ fn importFile(
 
     const full_path = try getSimFilePath(allocator, root, path);
     defer allocator.free(full_path);
-
-    std.debug.print("Importing: {s}...\n", .{path});
 
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
@@ -110,7 +126,7 @@ fn importFile(
 fn importCIFPDirectory(
     allocator: std.mem.Allocator,
     root: []const u8,
-    parser: *xp_procedura.Parser,
+    parser: *xp_procedure.Parser,
     db: *sqlite.Database,
 ) !void {
     const cifp_path = try getSimFilePath(
@@ -183,4 +199,6 @@ pub fn main() !void {
         .MicrosoftFlightSimulator => return error.MSFSNotSupportedYet,
         .Unknown => return error.UnknownFlightSimulator,
     }
+
+    std.debug.print("Import completed successfully!\n", .{});
 }

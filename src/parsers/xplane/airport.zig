@@ -13,8 +13,10 @@ pub const Parser = struct {
     }
 
     // https://developer.x-plane.com/article/airport-data-apt-dat-12-00-file-format-specification/
-    pub fn parseLine(self: *Parser, allocator: std.mem.Allocator, line: []const u8) !?models.AirportRecord {
-        if (line.len == 0 or line[0] == 'I' or line[0] == 'A') return null;
+    pub fn parseLine(self: *Parser, allocator: std.mem.Allocator, line: []const u8, file_name: []const u8) !?models.AirportRecord {
+        _ = file_name;
+
+        if ((line.len == 0 or line[0] == 'I' or line[0] == 'A') and line.len == 1) return null;
 
         if (std.mem.eql(u8, std.mem.trim(u8, line, " \r\t"), "99")) return null;
 

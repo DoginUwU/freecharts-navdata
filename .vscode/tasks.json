@@ -1,0 +1,29 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "zig build",
+            "type": "shell",
+            "command": "zig",
+            "args": [
+                "build"
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": []
+        },
+        {
+            "label": "test",
+            "type": "shell",
+            "command": "zig",
+            "args": [
+                "test",
+                "-femit-bin=zig-out/bin/freecharts_navdata_test",
+                "--test-no-exec",
+                "src/tests.zig",
+            ]
+        }
+    ]
+}

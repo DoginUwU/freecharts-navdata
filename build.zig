@@ -36,11 +36,17 @@ pub fn build(b: *std.Build) void {
     }
 
     const exe_tests = b.addTest(.{
+        .name = "freecharts_navdata_test",
         .root_module = b.createModule(.{
             .root_source_file = b.path("./src/tests.zig"),
             .target = target,
+            .optimize = optimize,
         }),
     });
+
+    const install_tests = b.addInstallArtifact(exe_tests, .{});
+    const build_test_step = b.step("build-test", "Build tests without running");
+    build_test_step.dependOn(&install_tests.step);
 
     const run_exe_tests = b.addRunArtifact(exe_tests);
 
