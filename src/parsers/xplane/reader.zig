@@ -13,10 +13,12 @@ pub fn processFile(
     var read_buffer: [1024]u8 = undefined;
     var reader = file.reader(&read_buffer);
 
+    const file_name = std.fs.path.basename(path);
+
     while (try reader.interface.takeDelimiter('\n')) |raw_line| {
         const line = std.mem.trimRight(u8, raw_line, "\r");
 
-        if (try parser.parseLine(allocator, line)) |parsed_item| {
+        if (try parser.parseLine(allocator, line, file_name)) |parsed_item| {
             try handlerFn(db, parsed_item);
         }
     }

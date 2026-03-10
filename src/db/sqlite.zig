@@ -3,6 +3,7 @@ pub const c = @cImport({
     @cInclude("sqlite3.h");
 });
 const models = @import("../core/models.zig");
+const math = @import("../core/math.zig");
 
 const SQLITE_TRANSIENT = @as(c.sqlite3_destructor_type, @ptrFromInt(@as(usize, @bitCast(@as(isize, -1)))));
 
@@ -12,6 +13,9 @@ pub const Database = struct {
     insert_airport_stmt: *c.sqlite3_stmt,
     insert_runway_stmt: *c.sqlite3_stmt,
     insert_gate_stmt: *c.sqlite3_stmt,
+    insert_airway_stmt: *c.sqlite3_stmt,
+    lookup_waypoint_stmt: *c.sqlite3_stmt,
+    insert_procedure_stmt: *c.sqlite3_stmt,
 
     xp_upsert_airport_metadata_stmt: *c.sqlite3_stmt,
 
@@ -28,13 +32,19 @@ pub const Database = struct {
         var insert_airport_stmt: ?*c.sqlite3_stmt = null;
         var insert_runway_stmt: ?*c.sqlite3_stmt = null;
         var insert_gate_stmt: ?*c.sqlite3_stmt = null;
+        var insert_airway_stmt: ?*c.sqlite3_stmt = null;
+        var lookup_waypoint_stmt: ?*c.sqlite3_stmt = null;
         var xp_upsert_airport_metadata_stmt: ?*c.sqlite3_stmt = null;
+        var insert_procedure_stmt: ?*c.sqlite3_stmt = null;
 
         try Database.assertOk(db.?, c.sqlite3_prepare_v2(db, "INSERT INTO waypoints (ident, lat, lon, airport, region) VALUES (?, ?, ?, ?, ?);", -1, &insert_fix_stmt, null));
         try Database.assertOk(db.?, c.sqlite3_prepare_v2(db, "INSERT INTO airports (icao, name, elevation, lat, lon) VALUES (?, ?, ?, ?, ?);", -1, &insert_airport_stmt, null));
         try Database.assertOk(db.?, c.sqlite3_prepare_v2(db, "INSERT INTO runways (airportIcao, widthMetres, lat, lon, number) VALUES (?, ?, ?, ?, ?);", -1, &insert_runway_stmt, null));
         try Database.assertOk(db.?, c.sqlite3_prepare_v2(db, "INSERT INTO gates (airportIcao, name, lat, lon) VALUES (?, ?, ?, ?);", -1, &insert_gate_stmt, null));
+        try Database.assertOk(db.?, c.sqlite3_prepare_v2(db, "INSERT INTO airways (fromIdent, fromLat, fromLon, fromType, toIdent, toLat, toLon, toType, airwayName, directionRestriction, level, baseAltitude, topAltitude, distanceNm) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);", -1, &insert_airway_stmt, null));
+        try Database.assertOk(db.?, c.sqlite3_prepare_v2(db, "SELECT lat, lon FROM waypoints WHERE ident = ? LIMIT 1;", -1, &lookup_waypoint_stmt, null));
         try Database.assertOk(db.?, c.sqlite3_prepare_v2(db, "INSERT INTO airports (icao, lat, lon) VALUES (?, ?, ?) ON CONFLICT(icao) DO UPDATE SET lat=excluded.lat, lon=excluded.lon;", -1, &xp_upsert_airport_metadata_stmt, null));
+        try Database.assertOk(db.?, c.sqlite3_prepare_v2(db, "INSERT INTO procedure_legs (icao, procName, transitionIdent, fixIdent, legType, type, sequence) VALUES (?, ?, ?, ?, ?, ?, ?);", -1, &insert_procedure_stmt, null));
 
         var database = Database{
             .db = db.?,
@@ -42,13 +52,18 @@ pub const Database = struct {
             .insert_airport_stmt = insert_airport_stmt.?,
             .insert_runway_stmt = insert_runway_stmt.?,
             .insert_gate_stmt = insert_gate_stmt.?,
+            .insert_airway_stmt = insert_airway_stmt.?,
+            .lookup_waypoint_stmt = lookup_waypoint_stmt.?,
             .xp_upsert_airport_metadata_stmt = xp_upsert_airport_metadata_stmt.?,
+            .insert_procedure_stmt = insert_procedure_stmt.?,
         };
 
-        try database.deleteDataFromTable("waypoints");
-        try database.deleteDataFromTable("airports");
-        try database.deleteDataFromTable("runways");
-        try database.deleteDataFromTable("gates");
+        // try database.deleteDataFromTable("waypoints");
+        // try database.deleteDataFromTable("airports");
+        // try database.deleteDataFromTable("runways");
+        // try database.deleteDataFromTable("gates");
+        try database.deleteDataFromTable("airways");
+        try database.deleteDataFromTable("procedure_legs");
 
         return database;
     }
@@ -58,7 +73,10 @@ pub const Database = struct {
         _ = c.sqlite3_finalize(self.insert_airport_stmt);
         _ = c.sqlite3_finalize(self.insert_runway_stmt);
         _ = c.sqlite3_finalize(self.insert_gate_stmt);
+        _ = c.sqlite3_finalize(self.insert_airway_stmt);
+        _ = c.sqlite3_finalize(self.lookup_waypoint_stmt);
         _ = c.sqlite3_finalize(self.xp_upsert_airport_metadata_stmt);
+        _ = c.sqlite3_finalize(self.insert_procedure_stmt);
 
         _ = c.sqlite3_close(self.db);
     }
@@ -91,6 +109,57 @@ pub const Database = struct {
         _ = c.sqlite3_bind_text(stmt, 4, fix.airport.ptr, @intCast(fix.airport.len), SQLITE_TRANSIENT);
         _ = c.sqlite3_bind_text(stmt, 5, fix.region.ptr, @intCast(fix.region.len), SQLITE_TRANSIENT);
 
+        const stepResult = c.sqlite3_step(stmt);
+        try Database.assertDone(self.db, stepResult);
+    }
+
+    fn lookupWaypointCoords(self: *Database, ident: []const u8) !?[2]f64 {
+        const stmt = self.lookup_waypoint_stmt;
+        _ = c.sqlite3_reset(stmt);
+        _ = c.sqlite3_clear_bindings(stmt);
+        _ = c.sqlite3_bind_text(stmt, 1, ident.ptr, @intCast(ident.len), SQLITE_TRANSIENT);
+        const result = c.sqlite3_step(stmt);
+        if (result == c.SQLITE_ROW) {
+            const lat = c.sqlite3_column_double(stmt, 0);
+            const lon = c.sqlite3_column_double(stmt, 1);
+            return .{ lat, lon };
+        } else if (result == c.SQLITE_DONE) {
+            return null;
+        }
+        try Database.assertDone(self.db, result);
+        return null;
+    }
+
+    pub fn insertAirway(self: *Database, airway: models.Airway) !void {
+        const from_coords = try self.lookupWaypointCoords(airway.from_ident) orelse {
+            std.debug.print("Airway insert skipped: waypoint '{s}' not found\n", .{airway.from_ident});
+            return;
+        };
+        const to_coords = try self.lookupWaypointCoords(airway.to_ident) orelse {
+            std.debug.print("Airway insert skipped: waypoint '{s}' not found\n", .{airway.to_ident});
+            return;
+        };
+
+        const distance_nm = math.haversineDistance(from_coords[0], from_coords[1], to_coords[0], to_coords[1]);
+
+        const stmt = self.insert_airway_stmt;
+        _ = c.sqlite3_reset(stmt);
+        _ = c.sqlite3_clear_bindings(stmt);
+
+        _ = c.sqlite3_bind_text(stmt, 1, airway.from_ident.ptr, @intCast(airway.from_ident.len), SQLITE_TRANSIENT);
+        _ = c.sqlite3_bind_double(stmt, 2, from_coords[0]);
+        _ = c.sqlite3_bind_double(stmt, 3, from_coords[1]);
+        _ = c.sqlite3_bind_int(stmt, 4, @intFromEnum(airway.from_type));
+        _ = c.sqlite3_bind_text(stmt, 5, airway.to_ident.ptr, @intCast(airway.to_ident.len), SQLITE_TRANSIENT);
+        _ = c.sqlite3_bind_double(stmt, 6, to_coords[0]);
+        _ = c.sqlite3_bind_double(stmt, 7, to_coords[1]);
+        _ = c.sqlite3_bind_int(stmt, 8, @intFromEnum(airway.to_type));
+        _ = c.sqlite3_bind_text(stmt, 9, airway.airway_name.ptr, @intCast(airway.airway_name.len), SQLITE_TRANSIENT);
+        _ = c.sqlite3_bind_int(stmt, 10, @intFromEnum(airway.direction_restriction));
+        _ = c.sqlite3_bind_int(stmt, 11, @intFromEnum(airway.level));
+        _ = c.sqlite3_bind_int(stmt, 12, airway.base_altitude);
+        _ = c.sqlite3_bind_int(stmt, 13, airway.top_altitude);
+        _ = c.sqlite3_bind_double(stmt, 14, distance_nm);
         const stepResult = c.sqlite3_step(stmt);
         try Database.assertDone(self.db, stepResult);
     }
@@ -159,6 +228,24 @@ pub const Database = struct {
                 try Database.assertDone(self.db, stepResult);
             },
         }
+    }
+
+    pub fn insertProcedure(self: *Database, proc: models.ProcedureLeg) !void {
+        const stmt = self.insert_procedure_stmt;
+
+        _ = c.sqlite3_reset(stmt);
+        _ = c.sqlite3_clear_bindings(stmt);
+
+        _ = c.sqlite3_bind_text(stmt, 1, proc.icao.ptr, @intCast(proc.icao.len), SQLITE_TRANSIENT);
+        _ = c.sqlite3_bind_text(stmt, 2, proc.proc_name.ptr, @intCast(proc.proc_name.len), SQLITE_TRANSIENT);
+        _ = c.sqlite3_bind_text(stmt, 3, proc.transition_ident.ptr, @intCast(proc.transition_ident.len), SQLITE_TRANSIENT);
+        _ = c.sqlite3_bind_text(stmt, 4, proc.fix_ident.ptr, @intCast(proc.fix_ident.len), SQLITE_TRANSIENT);
+        _ = c.sqlite3_bind_text(stmt, 5, proc.leg_type.ptr, @intCast(proc.leg_type.len), SQLITE_TRANSIENT);
+        _ = c.sqlite3_bind_int(stmt, 6, @intFromEnum(proc.type));
+        _ = c.sqlite3_bind_int(stmt, 7, @intCast(proc.sequence));
+
+        const stepResult = c.sqlite3_step(stmt);
+        try Database.assertDone(self.db, stepResult);
     }
 
     pub fn computeAirportsRanks(self: *Database) !void {
